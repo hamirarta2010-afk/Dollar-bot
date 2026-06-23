@@ -32,6 +32,7 @@ ALANCHAND_URL = f"https://api.alanchand.com/?type=currencies&token={ALANCHAND_TO
 ALANCHAND_GOLD_URL = f"https://api.alanchand.com/?type=golds&token={ALANCHAND_TOKEN}"
 PRICETODAY_URL = "https://api.priceto.day/v1/latest/irr/usd"
 PRICETODAY_EUR_URL = "https://api.priceto.day/v1/latest/irr/eur"
+PRICETODAY_IQD_URL = "https://api.priceto.day/v1/latest/irr/iqd"
 
 # بعضی سرویس‌ها درخواست‌های بدون User-Agent مرورگر را به‌عنوان بات رد می‌کنند
 REQUEST_HEADERS = {
@@ -248,6 +249,47 @@ def fetch_eur_price() -> str:
     raise RuntimeError(" | ".join(errors))
 
 
+def fetch_iqd_price() -> str:
+    """
+    قیمت دینار عراق چون به‌ازای ۱ دینار خیلی کوچک است، به‌ازای ۱۰۰۰ دینار محاسبه می‌شود.
+    """
+    errors = []
+
+    # منبع ۱: AlanChand
+    if ALANCHAND_TOKEN:
+        try:
+            resp = requests.get(ALANCHAND_URL, headers=REQUEST_HEADERS, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            price = _deep_find_currency_price(data, "iqd")
+            if price:
+                return _format_price(price * 1000) + " (هر ۱۰۰۰ دینار)"
+            errors.append("alanchand: قیمت دینار عراق در پاسخ پیدا نشد")
+        except Exception as e:
+            errors.append(f"alanchand: {e}")
+    else:
+        errors.append("alanchand: ALANCHAND_TOKEN ست نشده")
+
+    # منبع ۲ (پشتیبان): priceto.day
+    try:
+        resp = requests.get(PRICETODAY_IQD_URL, headers=REQUEST_HEADERS, timeout=10)
+        resp.raise_for_status()
+        number = _try_parse_plain_number(resp.text)
+        if number is None:
+            data = resp.json()
+            if isinstance(data, (int, float)):
+                number = float(data)
+            else:
+                number = _deep_find_currency_price(data, "iqd")
+        if number:
+            return _format_price(number * 1000) + " (هر ۱۰۰۰ دینار)"
+        errors.append("priceto.day: قیمت دینار عراق در پاسخ پیدا نشد")
+    except Exception as e:
+        errors.append(f"priceto.day: {e}")
+
+    raise RuntimeError(" | ".join(errors))
+
+
 def build_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
     username = context.bot.username
     return InlineKeyboardMarkup([
@@ -274,6 +316,12 @@ def build_full_report() -> str:
         parts.append(f"💶 قیمت یورو = {eur}")
     except Exception:
         logger.exception("خطا در دریافت قیمت یورو (گزارش کامل)")
+
+    try:
+        iqd = fetch_iqd_price()
+        parts.append(f"🇮🇶 قیمت دینار عراق = {iqd}")
+    except Exception:
+        logger.exception("خطا در دریافت قیمت دینار عراق (گزارش کامل)")
 
     if not parts:
         return "متاسفانه الان نتونستم قیمت‌ها رو بگیرم. کمی بعد دوباره تلاش کن."
@@ -311,6 +359,19 @@ async def euro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+async def iqd_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        price = fetch_iqd_price()
+        await update.message.reply_text(
+            f"🇮🇶 قیمت دینار عراق:\n{price}", reply_markup=build_keyboard(context)
+        )
+    except Exception:
+        logger.exception("خطا در دریافت قیمت دینار عراق")
+        await update.message.reply_text(
+            "متاسفانه الان نتونستم قیمت دینار عراق رو بگیرم. کمی بعد دوباره تلاش کن."
+        )
+
+
 async def gold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = fetch_gold_prices()
@@ -324,7 +385,7 @@ async def gold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "سلام! برای دیدن قیمت لحظه‌ای، فقط یکی از کلمه‌های «دلار»، «یورو» یا «طلا» رو برام بنویس."
+        "سلام! برای دیدن قیمت لحظه‌ای، فقط یکی از کلمه‌های «دلار»، «یورو»، «دینار» یا «طلا» رو برام بنویس."
     )
 
 
@@ -346,6 +407,8 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await gold_command(update, context)
     elif "یورو" in text:
         await euro_command(update, context)
+    elif "دینار" in text:
+        await iqd_command(update, context)
     elif "دلار" in text:
         await price_command(update, context)
 
