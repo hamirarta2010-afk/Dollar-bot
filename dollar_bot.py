@@ -5,15 +5,15 @@
     pip install python-telegram-bot==21.* requests
 
 تنظیمات:
-    1. از @BotFather در تلگرام یک بات بساز و توکن بگیر.
-    2. توکن رو در متغیر BOT_TOKEN پایین قرار بده (یا به‌صورت متغیر محیطی ست کن).
-    3. اجرا کن: python dollar_bot.py
+    1. از @BotFather در تلگرام یک بات بساز و توکن بگیر -> متغیر BOT_TOKEN
+    2. از @alanchand_token_bot در تلگرام یک توکن رایگان بگیر -> متغیر ALANCHAND_TOKEN
+       (فقط /start رو به این بات بزن، خودش توکن می‌ده. کاملاً رایگانه.)
+    3. هر دو رو به‌عنوان متغیر محیطی (Environment Variable) ست کن.
+    4. اجرا کن: python dollar_bot.py
 
-منبع قیمت:
-    از وب‌سرویس رایگان brsapi.ir استفاده شده (بدون نیاز به کلید/ثبت‌نام).
-    اگر این سرویس از کار افتاد یا فرمت پاسخش تغییر کرد، فقط کافیه آدرس
-    API_URL و تابع extract_usd_price رو با منبع جدید (مثلاً alanchand.com
-    یا navasan.tech) هماهنگ کنی.
+منابع قیمت:
+    اول از AlanChand (نیاز به توکن رایگان) استفاده می‌شه؛ اگه جواب نداد،
+    به‌صورت خودکار به priceto.day (بدون نیاز به توکن) سوییچ می‌کنه.
 """
 
 import os
@@ -26,10 +26,11 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
-# منبع اصلی: priceto.day (روی Netlify میزبانی شده، معمولاً از خارج ایران هم در دسترسه)
-PRIMARY_URL = "https://api.priceto.day/v1/latest/irr/usd"
-# منبع پشتیبان (fallback) در صورت قطع بودن منبع اصلی
-FALLBACK_URL = "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json"
+ALANCHAND_TOKEN = os.environ.get("ALANCHAND_TOKEN", "")
+
+ALANCHAND_URL = "https://api.alanchand.com?type=currency&symbols=usd"
+PRICETODAY_URL = "https://api.priceto.day/v1/latest/irr/usd"
+
 # بعضی سرویس‌ها درخواست‌های بدون User-Agent مرورگر را به‌عنوان بات رد می‌کنند
 REQUEST_HEADERS = {
     "User-Agent": (
@@ -49,69 +50,110 @@ def _try_parse_plain_number(text: str):
         return None
 
 
-def _extract_from_brsapi(data) -> float:
-    candidates = []
+def _deep_find_usd_price(data):
+    """
+    به‌صورت بازگشتی در هر ساختار JSON دنبال قیمت دلار می‌گردد.
+    چون فرمت دقیق APIهای مختلف فرق دارد، این تابع چند الگوی رایج را پوشش می‌دهد.
+    """
+    price_keys = ("price", "value", "sell", "rate", "amount", "Price")
+
     if isinstance(data, dict):
-        for key in ("currency", "currencies", "ارز", "Currency"):
-            if key in data and isinstance(data[key], list):
-                candidates = data[key]
-                break
+        keys_lower = {str(k).lower(): k for k in data.keys()}
+
+        # حالت ۱: کلیدی دقیقاً به اسم usd وجود دارد
+        if "usd" in keys_lower:
+            usd_val = data[keys_lower["usd"]]
+            if isinstance(usd_val, dict):
+                for pk in price_keys:
+                    for k2 in usd_val:
+                        if str(k2).lower() == pk.lower():
+                            try:
+                                return float(usd_val[k2])
+                            except (TypeError, ValueError):
+                                pass
+            else:
+                try:
+                    return float(usd_val)
+                except (TypeError, ValueError):
+                    pass
+
+        # حالت ۲: این دیکشنری خودش یک آیتم با symbol/name_en برابر usd است
+        symbol = str(
+            data.get("symbol") or data.get("Symbol") or data.get("name_en") or ""
+        ).lower()
+        if symbol == "usd":
+            for pk in price_keys:
+                for k2 in data:
+                    if str(k2).lower() == pk.lower():
+                        try:
+                            return float(data[k2])
+                        except (TypeError, ValueError):
+                            pass
+
+        # در غیر این صورت، بازگشتی در مقادیر دیگر بگرد
+        for v in data.values():
+            result = _deep_find_usd_price(v)
+            if result is not None:
+                return result
+
     elif isinstance(data, list):
-        candidates = data
+        for item in data:
+            result = _deep_find_usd_price(item)
+            if result is not None:
+                return result
 
-    for item in candidates:
-        if not isinstance(item, dict):
-            continue
-        name_en = str(item.get("name_en") or item.get("symbol") or "").upper()
-        name_fa = str(item.get("name") or "")
-        if "USD" in name_en or "دلار" in name_fa:
-            price = item.get("price") or item.get("Price") or item.get("value")
-            if price:
-                return float(price)
+    return None
 
-    raise ValueError("قیمت دلار در پاسخ منبع پشتیبان پیدا نشد")
+
+def _format_price(number: float) -> str:
+    return f"{int(number):,} تومان".replace(",", "،")
 
 
 def fetch_usd_price() -> str:
-    # ابتدا منبع اصلی را امتحان کن
-    try:
-        resp = requests.get(PRIMARY_URL, headers=REQUEST_HEADERS, timeout=10)
-        resp.raise_for_status()
-        raw = resp.text
+    errors = []
 
-        # حالت ۱: پاسخ یک عدد ساده است (متن یا JSON)
-        number = _try_parse_plain_number(raw)
-        if number is None:
-            # حالت ۲: پاسخ JSON با یک فیلد قیمت داخلش است
+    # منبع ۱: AlanChand (دقیق‌تره، ولی نیاز به توکن رایگان دارد)
+    if ALANCHAND_TOKEN:
+        try:
+            headers = dict(REQUEST_HEADERS)
+            headers["Authorization"] = f"Bearer {ALANCHAND_TOKEN}"
+            resp = requests.get(ALANCHAND_URL, headers=headers, timeout=10)
+            resp.raise_for_status()
             data = resp.json()
-            if isinstance(data, dict):
-                for key in ("price", "value", "rate", "latest", "amount"):
-                    if key in data:
-                        number = float(data[key])
-                        break
-            if number is None and isinstance(data, (int, float)):
-                number = float(data)
+            price = _deep_find_usd_price(data)
+            if price:
+                return _format_price(price)
+            errors.append("alanchand: قیمت در پاسخ پیدا نشد")
+        except Exception as e:
+            errors.append(f"alanchand: {e}")
+    else:
+        errors.append("alanchand: ALANCHAND_TOKEN ست نشده")
 
-        if number is not None and number > 0:
-            return f"{int(number):,} تومان".replace(",", "،")
-
-        raise ValueError("فرمت پاسخ منبع اصلی ناشناخته بود")
-
-    except Exception as primary_error:
-        logger.warning(f"منبع اصلی جواب نداد ({primary_error})؛ تلاش با منبع پشتیبان...")
-        # اگر منبع اصلی کار نکرد، منبع پشتیبان را امتحان کن
-        resp = requests.get(FALLBACK_URL, headers=REQUEST_HEADERS, timeout=10)
+    # منبع ۲ (پشتیبان): priceto.day (بدون نیاز به توکن)
+    try:
+        resp = requests.get(PRICETODAY_URL, headers=REQUEST_HEADERS, timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        price = _extract_from_brsapi(data)
-        return f"{int(price):,} تومان".replace(",", "،")
+        number = _try_parse_plain_number(resp.text)
+        if number is None:
+            data = resp.json()
+            if isinstance(data, (int, float)):
+                number = float(data)
+            else:
+                number = _deep_find_usd_price(data)
+        if number:
+            return _format_price(number)
+        errors.append("priceto.day: قیمت در پاسخ پیدا نشد")
+    except Exception as e:
+        errors.append(f"priceto.day: {e}")
+
+    raise RuntimeError(" | ".join(errors))
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = fetch_usd_price()
         await update.message.reply_text(f"💵 قیمت دلار آزاد:\n{price}")
-    except Exception as e:
+    except Exception:
         logger.exception("خطا در دریافت قیمت")
         await update.message.reply_text(
             "متاسفانه الان نتونستم قیمت رو بگیرم. کمی بعد دوباره تلاش کن."
