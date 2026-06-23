@@ -26,15 +26,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
-API_URL = "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json"
+# منبع اصلی: priceto.day (روی Netlify میزبانی شده، معمولاً از خارج ایران هم در دسترسه)
+PRIMARY_URL = "https://api.priceto.day/v1/latest/irr/usd"
+# منبع پشتیبان (fallback) در صورت قطع بودن منبع اصلی
+FALLBACK_URL = "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json"
 
 
-def extract_usd_price(data: dict) -> str:
-    """
-    سعی می‌کند قیمت دلار را از ساختار JSON برگشتی پیدا کند.
-    چون فرمت دقیق این APIهای رایگان گاهی تغییر می‌کند، چند حالت رایج
-    را پوشش می‌دهیم.
-    """
+def _try_parse_plain_number(text: str):
+    """اگر پاسخ یک عدد ساده (متن یا JSON عددی) بود، آن را برمی‌گرداند."""
+    text = text.strip().strip('"')
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _extract_from_brsapi(data) -> float:
     candidates = []
     if isinstance(data, dict):
         for key in ("currency", "currencies", "ارز", "Currency"):
@@ -52,18 +59,44 @@ def extract_usd_price(data: dict) -> str:
         if "USD" in name_en or "دلار" in name_fa:
             price = item.get("price") or item.get("Price") or item.get("value")
             if price:
-                return str(price)
+                return float(price)
 
-    raise ValueError("قیمت دلار در پاسخ سرویس پیدا نشد")
+    raise ValueError("قیمت دلار در پاسخ منبع پشتیبان پیدا نشد")
 
 
 def fetch_usd_price() -> str:
-    resp = requests.get(API_URL, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    price_str = extract_usd_price(data)
-    price_int = int(float(price_str))
-    return f"{price_int:,} تومان".replace(",", "،")
+    # ابتدا منبع اصلی را امتحان کن
+    try:
+        resp = requests.get(PRIMARY_URL, timeout=10)
+        resp.raise_for_status()
+        raw = resp.text
+
+        # حالت ۱: پاسخ یک عدد ساده است (متن یا JSON)
+        number = _try_parse_plain_number(raw)
+        if number is None:
+            # حالت ۲: پاسخ JSON با یک فیلد قیمت داخلش است
+            data = resp.json()
+            if isinstance(data, dict):
+                for key in ("price", "value", "rate", "latest", "amount"):
+                    if key in data:
+                        number = float(data[key])
+                        break
+            if number is None and isinstance(data, (int, float)):
+                number = float(data)
+
+        if number is not None and number > 0:
+            return f"{int(number):,} تومان".replace(",", "،")
+
+        raise ValueError("فرمت پاسخ منبع اصلی ناشناخته بود")
+
+    except Exception as primary_error:
+        logger.warning(f"منبع اصلی جواب نداد ({primary_error})؛ تلاش با منبع پشتیبان...")
+        # اگر منبع اصلی کار نکرد، منبع پشتیبان را امتحان کن
+        resp = requests.get(FALLBACK_URL, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        price = _extract_from_brsapi(data)
+        return f"{int(price):,} تومان".replace(",", "،")
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
