@@ -324,10 +324,7 @@ async def gold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "سلام! برای دیدن قیمت لحظه‌ای دلار آزاد دستور /price رو بفرست،\n"
-        "برای نرخ یورو دستور /euro رو بفرست،\n"
-        "برای نرخ طلا دستور /gold رو بفرست،\n"
-        "یا فقط کلمه «دلار»، «یورو» یا «طلا» رو برام بنویس."
+        "سلام! برای دیدن قیمت لحظه‌ای، فقط یکی از کلمه‌های «دلار»، «یورو» یا «طلا» رو برام بنویس."
     )
 
 
@@ -359,9 +356,6 @@ def main():
 
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("price", price_command))
-    app.add_handler(CommandHandler("euro", euro_command))
-    app.add_handler(CommandHandler("gold", gold_command))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     logger.info("بات در حال اجراست...")
