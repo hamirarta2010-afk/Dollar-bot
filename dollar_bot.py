@@ -163,6 +163,9 @@ def fetch_gold_prices() -> str:
         raise RuntimeError("هیچ قیمتی از پاسخ استخراج نشد")
 
     return "🏆 نرخ انواع طلا:\n\n" + "\n".join(lines)
+
+
+def fetch_usd_price() -> str:
     errors = []
 
     # منبع ۱: AlanChand (دقیق‌تره، ولی نیاز به توکن رایگان دارد)
