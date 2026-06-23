@@ -387,6 +387,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "سلام! برای دیدن قیمت لحظه‌ای، فقط یکی از کلمه‌های «دلار»، «یورو»، «دینار» یا «طلا» رو برام بنویس."
     )
+    await update.message.reply_text(build_full_report(), reply_markup=build_keyboard(context))
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
