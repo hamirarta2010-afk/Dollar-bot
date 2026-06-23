@@ -19,7 +19,7 @@
 import os
 import logging
 import requests
-from telegram import Update, MessageEntity
+from telegram import Update, MessageEntity, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 logging.basicConfig(level=logging.INFO)
@@ -248,6 +248,14 @@ def fetch_eur_price() -> str:
     raise RuntimeError(" | ".join(errors))
 
 
+def build_keyboard(context: ContextTypes.DEFAULT_TYPE) -> InlineKeyboardMarkup:
+    username = context.bot.username
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📈 مشاهده نرخ آنلاین", url=f"https://t.me/{username}")],
+        [InlineKeyboardButton("➕ اضافه کردن به گروه", url=f"https://t.me/{username}?startgroup=true")],
+    ])
+
+
 def build_full_report() -> str:
     parts = []
     try:
@@ -274,13 +282,15 @@ def build_full_report() -> str:
 
 
 async def mention_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(build_full_report())
+    await update.message.reply_text(build_full_report(), reply_markup=build_keyboard(context))
 
 
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = fetch_usd_price()
-        await update.message.reply_text(f"💵 قیمت دلار آزاد:\n{price}")
+        await update.message.reply_text(
+            f"💵 قیمت دلار آزاد:\n{price}", reply_markup=build_keyboard(context)
+        )
     except Exception:
         logger.exception("خطا در دریافت قیمت")
         await update.message.reply_text(
@@ -291,7 +301,9 @@ async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def euro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = fetch_eur_price()
-        await update.message.reply_text(f"💶 قیمت یورو:\n{price}")
+        await update.message.reply_text(
+            f"💶 قیمت یورو:\n{price}", reply_markup=build_keyboard(context)
+        )
     except Exception:
         logger.exception("خطا در دریافت قیمت یورو")
         await update.message.reply_text(
@@ -302,7 +314,7 @@ async def euro_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def gold_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         text = fetch_gold_prices()
-        await update.message.reply_text(text)
+        await update.message.reply_text(text, reply_markup=build_keyboard(context))
     except Exception:
         logger.exception("خطا در دریافت قیمت طلا")
         await update.message.reply_text(
