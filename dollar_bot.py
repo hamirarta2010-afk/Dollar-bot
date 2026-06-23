@@ -30,6 +30,14 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 PRIMARY_URL = "https://api.priceto.day/v1/latest/irr/usd"
 # منبع پشتیبان (fallback) در صورت قطع بودن منبع اصلی
 FALLBACK_URL = "https://brsapi.ir/FreeTsetmcBourseApi/Api_Free_Gold_Currency_v2.json"
+# بعضی سرویس‌ها درخواست‌های بدون User-Agent مرورگر را به‌عنوان بات رد می‌کنند
+REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+}
 
 
 def _try_parse_plain_number(text: str):
@@ -67,7 +75,7 @@ def _extract_from_brsapi(data) -> float:
 def fetch_usd_price() -> str:
     # ابتدا منبع اصلی را امتحان کن
     try:
-        resp = requests.get(PRIMARY_URL, timeout=10)
+        resp = requests.get(PRIMARY_URL, headers=REQUEST_HEADERS, timeout=10)
         resp.raise_for_status()
         raw = resp.text
 
@@ -92,7 +100,7 @@ def fetch_usd_price() -> str:
     except Exception as primary_error:
         logger.warning(f"منبع اصلی جواب نداد ({primary_error})؛ تلاش با منبع پشتیبان...")
         # اگر منبع اصلی کار نکرد، منبع پشتیبان را امتحان کن
-        resp = requests.get(FALLBACK_URL, timeout=10)
+        resp = requests.get(FALLBACK_URL, headers=REQUEST_HEADERS, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         price = _extract_from_brsapi(data)
