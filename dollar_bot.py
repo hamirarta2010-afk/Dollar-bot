@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT-YOUR-TOKEN-HERE")
 ALANCHAND_TOKEN = os.environ.get("ALANCHAND_TOKEN", "")
 
-ALANCHAND_URL = "https://api.alanchand.com?type=currency&symbols=usd"
+ALANCHAND_URL = f"https://api.alanchand.com/?type=currencies&token={ALANCHAND_TOKEN}"
 PRICETODAY_URL = "https://api.priceto.day/v1/latest/irr/usd"
 
 # بعضی سرویس‌ها درخواست‌های بدون User-Agent مرورگر را به‌عنوان بات رد می‌کنند
@@ -115,9 +115,7 @@ def fetch_usd_price() -> str:
     # منبع ۱: AlanChand (دقیق‌تره، ولی نیاز به توکن رایگان دارد)
     if ALANCHAND_TOKEN:
         try:
-            headers = dict(REQUEST_HEADERS)
-            headers["Authorization"] = f"Bearer {ALANCHAND_TOKEN}"
-            resp = requests.get(ALANCHAND_URL, headers=headers, timeout=10)
+            resp = requests.get(ALANCHAND_URL, headers=REQUEST_HEADERS, timeout=10)
             resp.raise_for_status()
             data = resp.json()
             price = _deep_find_usd_price(data)
