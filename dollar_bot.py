@@ -19,7 +19,7 @@
 import os
 import logging
 import requests
-from telegram import Update
+from telegram import Update, MessageEntity
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 logging.basicConfig(level=logging.INFO)
@@ -203,6 +203,29 @@ def fetch_usd_price() -> str:
     raise RuntimeError(" | ".join(errors))
 
 
+def build_full_report() -> str:
+    parts = []
+    try:
+        parts.append(fetch_gold_prices())
+    except Exception:
+        logger.exception("خطا در دریافت قیمت طلا (گزارش کامل)")
+
+    try:
+        usd = fetch_usd_price()
+        parts.append(f"💵 قیمت دلار = {usd}")
+    except Exception:
+        logger.exception("خطا در دریافت قیمت دلار (گزارش کامل)")
+
+    if not parts:
+        return "متاسفانه الان نتونستم قیمت‌ها رو بگیرم. کمی بعد دوباره تلاش کن."
+
+    return "\n\n".join(parts)
+
+
+async def mention_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(build_full_report())
+
+
 async def price_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         price = fetch_usd_price()
@@ -234,7 +257,19 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text or ""
+    message = update.message
+    text = message.text or ""
+
+    # بررسی اینکه آیا بات در همین پیام منشن (@username) شده یا نه
+    bot_username = context.bot.username
+    if message.entities and bot_username:
+        for ent in message.entities:
+            if ent.type == MessageEntity.MENTION:
+                mention_text = text[ent.offset: ent.offset + ent.length]
+                if mention_text.lower() == f"@{bot_username}".lower():
+                    await mention_handler(update, context)
+                    return
+
     if "طلا" in text:
         await gold_command(update, context)
     elif "دلار" in text:
