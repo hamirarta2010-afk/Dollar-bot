@@ -19,8 +19,23 @@
 import os
 import logging
 import requests
-from telegram import Update, MessageEntity, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
+from telegram import (
+    Update,
+    MessageEntity,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    InlineQueryHandler,
+    ContextTypes,
+    filters,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -506,6 +521,50 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await price_command(update, context)
 
 
+async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    این تابع وقتی کسی توی هر چتی بنویسه @یوزرنیم_بات و بعد یه کلمه، فعال می‌شه
+    (نیاز به فعال بودن Inline Mode در BotFather دارد: /setinline).
+    """
+    query = (update.inline_query.query or "").strip().lower()
+
+    # هر گزینه: (کلیدواژه‌ها، عنوان نمایشی، تابع گرفتن قیمت، پیشوند پیام)
+    options = [
+        (["دلار", "dollar", "usd"], "💵 قیمت دلار", fetch_usd_price, "💵 قیمت دلار:\n"),
+        (["یورو", "euro", "eur"], "💶 قیمت یورو", fetch_eur_price, "💶 قیمت یورو:\n"),
+        (["طلا", "gold"], "🏆 نرخ انواع طلا", fetch_gold_prices, ""),
+        (["عراق", "iqd"], "🇮🇶 دینار عراق", fetch_iqd_price, "🇮🇶 قیمت دینار عراق:\n"),
+        (["کویت", "kwd"], "🇰🇼 دینار کویت", fetch_kwd_price, "🇰🇼 قیمت دینار کویت:\n"),
+    ]
+
+    results = []
+    for idx, (keywords, title, fetch_fn, prefix) in enumerate(options):
+        matches = query == "" or any(
+            query in kw.lower() or kw.lower() in query for kw in keywords
+        )
+        if not matches:
+            continue
+
+        try:
+            price_text = fetch_fn()
+            message_text = price_text if prefix == "" else f"{prefix}{price_text}"
+        except Exception:
+            logger.exception(f"خطا در inline query برای {title}")
+            message_text = "متاسفانه الان نتونستم قیمت رو بگیرم. کمی بعد دوباره تلاش کن."
+
+        description = message_text.split("\n")[0][:60]
+        results.append(
+            InlineQueryResultArticle(
+                id=str(idx),
+                title=title,
+                description=description,
+                input_message_content=InputTextMessageContent(message_text),
+            )
+        )
+
+    await update.inline_query.answer(results, cache_time=20)
+
+
 def main():
     if BOT_TOKEN == "PUT-YOUR-TOKEN-HERE":
         raise SystemExit("لطفاً اول BOT_TOKEN رو با توکن واقعی بات خودت جایگزین کن.")
@@ -513,6 +572,7 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CallbackQueryHandler(dinar_callback_handler, pattern="^dinar_"))
+    app.add_handler(InlineQueryHandler(inline_query_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     logger.info("بات در حال اجراست...")
