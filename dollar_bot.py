@@ -17,6 +17,7 @@
 """
 
 import os
+import asyncio
 import logging
 import requests
 from telegram import (
@@ -525,37 +526,51 @@ async def inline_query_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     این تابع وقتی کسی توی هر چتی بنویسه @یوزرنیم_بات و بعد یه کلمه، فعال می‌شه
     (نیاز به فعال بودن Inline Mode در BotFather دارد: /setinline).
+
+    نکته مهم: تابع‌های fetch_*_price از کتابخونه requests (synchronous) استفاده
+    می‌کنن. اگه مستقیم await بشن، کل event loop بات قفل می‌شه و باعث می‌شه
+    کلاینت تلگرام بی‌نهایت در حال لودینگ بمونه. برای همین هرکدوم رو توی
+    یه thread جدا (asyncio.to_thread) اجرا می‌کنیم و یه سقف زمانی (timeout)
+    کوتاه براشون می‌گذاریم.
     """
     query = (update.inline_query.query or "").strip().lower()
 
     # هر گزینه: (کلیدواژه‌ها، عنوان نمایشی، تابع گرفتن قیمت، پیشوند پیام)
     options = [
-        (["دلار", "dollar", "usd"], "💵 قیمت دلار", fetch_usd_price, "💵 قیمت دلار:\n"),
-        (["یورو", "euro", "eur"], "💶 قیمت یورو", fetch_eur_price, "💶 قیمت یورو:\n"),
-        (["طلا", "gold"], "🏆 نرخ انواع طلا", fetch_gold_prices, ""),
-        (["عراق", "iqd"], "🇮🇶 دینار عراق", fetch_iqd_price, "🇮🇶 قیمت دینار عراق:\n"),
-        (["کویت", "kwd"], "🇰🇼 دینار کویت", fetch_kwd_price, "🇰🇼 قیمت دینار کویت:\n"),
+        ("usd", ["دلار", "dollar", "usd"], "💵 قیمت دلار", fetch_usd_price, "💵 قیمت دلار:\n"),
+        ("eur", ["یورو", "euro", "eur"], "💶 قیمت یورو", fetch_eur_price, "💶 قیمت یورو:\n"),
+        ("gold", ["طلا", "gold"], "🏆 نرخ انواع طلا", fetch_gold_prices, ""),
+        ("iqd", ["عراق", "iqd"], "🇮🇶 دینار عراق", fetch_iqd_price, "🇮🇶 قیمت دینار عراق:\n"),
+        ("kwd", ["کویت", "kwd"], "🇰🇼 دینار کویت", fetch_kwd_price, "🇰🇼 قیمت دینار کویت:\n"),
     ]
 
-    results = []
-    for idx, (keywords, title, fetch_fn, prefix) in enumerate(options):
-        matches = query == "" or any(
-            query in kw.lower() or kw.lower() in query for kw in keywords
-        )
-        if not matches:
-            continue
+    matched = [
+        opt for opt in options
+        if query == "" or any(query in kw.lower() or kw.lower() in query for kw in opt[1])
+    ]
 
+    async def safe_fetch(fetch_fn):
         try:
-            price_text = fetch_fn()
-            message_text = price_text if prefix == "" else f"{prefix}{price_text}"
+            # اجرای تابع بلاکینگ توی یه thread جدا، با سقف ۸ ثانیه‌ای
+            return await asyncio.wait_for(asyncio.to_thread(fetch_fn), timeout=8)
         except Exception:
-            logger.exception(f"خطا در inline query برای {title}")
+            logger.exception("خطا در inline query")
+            return None
+
+    # همه قیمت‌های منطبق رو به‌صورت موازی (نه پشت‌سرهم) بگیر
+    fetched = await asyncio.gather(*[safe_fetch(opt[3]) for opt in matched])
+
+    results = []
+    for (key, keywords, title, fetch_fn, prefix), price_text in zip(matched, fetched):
+        if price_text is None:
             message_text = "متاسفانه الان نتونستم قیمت رو بگیرم. کمی بعد دوباره تلاش کن."
+        else:
+            message_text = price_text if prefix == "" else f"{prefix}{price_text}"
 
         description = message_text.split("\n")[0][:60]
         results.append(
             InlineQueryResultArticle(
-                id=str(idx),
+                id=key,
                 title=title,
                 description=description,
                 input_message_content=InputTextMessageContent(message_text),
